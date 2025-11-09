@@ -132,6 +132,66 @@ check_debian_version() {
     fi
 }
 
+# Check and install critical dependencies needed to run this script
+check_critical_dependencies() {
+    echo -e "${BLUE}Checking critical dependencies...${NC}"
+    
+    local missing_critical=()
+    local critical_packages=(
+        "curl"
+        "wget" 
+        "sudo"
+        "gnupg"
+    )
+    
+    # Check which critical packages are missing
+    for pkg in "${critical_packages[@]}"; do
+        if ! command -v "$pkg" &>/dev/null; then
+            missing_critical+=("$pkg")
+        fi
+    done
+    
+    # If any critical packages are missing, install them
+    if [ ${#missing_critical[@]} -gt 0 ]; then
+        echo -e "${YELLOW}[!] Missing critical packages: ${missing_critical[*]}${NC}"
+        echo -e "${GREEN}[+] Installing critical dependencies...${NC}"
+        
+        # Update package lists first
+        if ! apt-get update -qq; then
+            echo -e "${RED}[-] Failed to update package lists${NC}" >&2
+            echo -e "${RED}[-] Please ensure this system has internet connectivity${NC}" >&2
+            exit 1
+        fi
+        
+        # Install missing critical packages
+        if ! apt-get install -y -qq "${missing_critical[@]}"; then
+            echo -e "${RED}[-] Failed to install critical dependencies: ${missing_critical[*]}${NC}" >&2
+            exit 1
+        fi
+        
+        echo -e "${GREEN}[+] Critical dependencies installed${NC}"
+    else
+        echo -e "${GREEN}[+] All critical dependencies present${NC}"
+    fi
+}
+
+# Enhanced check for bash version
+check_bash_version() {
+    if [ -z "${BASH_VERSION}" ]; then
+        echo -e "${RED}[-] This script requires bash${NC}" >&2
+        exit 1
+    fi
+    
+    local bash_major="${BASH_VERSINFO[0]}"
+    if [ "$bash_major" -lt 4 ]; then
+        echo -e "${YELLOW}[!] Warning: Bash version ${BASH_VERSION} detected. Version 4+ recommended.${NC}"
+        read -rp "Continue anyway? (yes/no): " response
+        if [ "$response" != "yes" ]; then
+            exit 1
+        fi
+    fi
+}
+
 # Initialize
 init_log() {
     mkdir -p "$BACKUP_DIR"
@@ -430,6 +490,13 @@ install_packages() {
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold"
     
     log "Installing required packages..."
+    # Package breakdown:
+    # - Core utilities: sudo, curl, wget, gnupg2, ca-certificates (should already be installed by check_critical_dependencies)
+    # - Network/repo tools: software-properties-common, apt-transport-https, lsb-release
+    # - Security: unattended-upgrades, fail2ban, ufw
+    # - VPN: wireguard, qrencode (for QR codes)
+    # - Web server: nginx, apache2-utils (for htpasswd), certbot, python3-certbot-nginx
+    # - System tools: git, python3, python3-pip, python3-venv, rsyslog
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
         sudo curl wget gnupg2 software-properties-common apt-transport-https \
         ca-certificates lsb-release unattended-upgrades fail2ban ufw git \
@@ -1490,9 +1557,13 @@ EOF
 
 # Main execution flow
 main() {
-    # Pre-flight checks
+    # Pre-flight checks (before logging starts)
+    check_bash_version
     check_root
     check_debian_version
+    check_critical_dependencies
+    
+    # Initialize logging
     init_log
     
     # Load configuration
