@@ -346,6 +346,62 @@ select_user_name() {
     save_state "user_selected"
 }
 
+# Prompt for user password
+get_user_password() {
+    if [ -n "$USER_PASSWORD" ]; then
+        log "Using pre-configured password"
+        return
+    fi
+    
+    # Check if user already exists and has a password
+    if id "$USER_ACCOUNT_NAME" &>/dev/null; then
+        if ! passwd -S "$USER_ACCOUNT_NAME" | grep -q " NP "; then
+            log "User already has a password set"
+            read -rp "Set a new password for this user? (yes/no): " change_pass
+            if [ "$change_pass" != "yes" ]; then
+                log "Keeping existing password"
+                USER_PASSWORD=""
+                return
+            fi
+        fi
+    fi
+    
+    echo ""
+    echo "Please set a password for user '${USER_ACCOUNT_NAME}'"
+    echo "This password will be used for:"
+    echo "  - Console/TTY login"
+    echo "  - Netdata web interface authentication"
+    echo "  - Any services requiring user authentication"
+    echo ""
+    
+    while true; do
+        read -rsp "Enter password: " password1
+        echo ""
+        
+        if [ -z "$password1" ]; then
+            warning "Password cannot be empty"
+            continue
+        fi
+        
+        if [ ${#password1} -lt 8 ]; then
+            warning "Password must be at least 8 characters long"
+            continue
+        fi
+        
+        read -rsp "Confirm password: " password2
+        echo ""
+        
+        if [ "$password1" != "$password2" ]; then
+            warning "Passwords do not match. Please try again."
+            continue
+        fi
+        
+        USER_PASSWORD="$password1"
+        log "Password set successfully"
+        break
+    done
+}
+
 # Preseed postfix to avoid interactive prompts
 preseed_postfix_settings() {
     log "Pre-configuring mail system..."
@@ -590,13 +646,7 @@ EOF
         log "Creating user account: $USER_ACCOUNT_NAME"
         useradd -m -s /bin/bash "$USER_ACCOUNT_NAME"
         usermod -aG sudo "$USER_ACCOUNT_NAME"
-        
-        # Generate strong password
-        USER_PASSWORD=$(openssl rand -base64 24)
-        echo "${USER_ACCOUNT_NAME}:${USER_PASSWORD}" | chpasswd
-        
-        log "User '$USER_ACCOUNT_NAME' created with password"
-        log "IMPORTANT: Save this password: $USER_PASSWORD"
+        log "User '$USER_ACCOUNT_NAME' created"
     else
         log "User '$USER_ACCOUNT_NAME' already exists"
         
@@ -605,17 +655,13 @@ EOF
             log "Adding existing user to sudo group"
             usermod -aG sudo "$USER_ACCOUNT_NAME"
         fi
-        
-        # Check if user has a password set
-        if passwd -S "$USER_ACCOUNT_NAME" | grep -q " NP "; then
-            log "Existing user has no password - setting one now"
-            USER_PASSWORD=$(openssl rand -base64 24)
-            echo "${USER_ACCOUNT_NAME}:${USER_PASSWORD}" | chpasswd
-            log "Password set for existing user: $USER_PASSWORD"
-        else
-            log "Existing user already has a password - not changing it"
-            USER_PASSWORD=""
-        fi
+    fi
+    
+    # Set user password (if one was provided or prompted for)
+    if [ -n "$USER_PASSWORD" ]; then
+        log "Setting password for user $USER_ACCOUNT_NAME"
+        echo "${USER_ACCOUNT_NAME}:${USER_PASSWORD}" | chpasswd
+        log "Password set successfully"
     fi
     
     # Configure passwordless sudo
@@ -1213,7 +1259,7 @@ Port: ${SSH_PORT}
 User: ${USER_ACCOUNT_NAME}
 Authentication: SSH Key Only (password authentication disabled)
 Sudo Access: Passwordless (no password required for sudo commands)
-$([ -n "${USER_PASSWORD:-}" ] && echo "Account Password: ${USER_PASSWORD}" || echo "Note: Using existing user account (password not changed)")
+$([ -n "${USER_PASSWORD:-}" ] && echo "Account Password: (set during installation)" || echo "Account Password: (using existing password)")
 
 IMPORTANT: 
 - Root login is disabled for password authentication
@@ -1458,6 +1504,7 @@ main() {
     get_public_ip
     get_host_fqdn
     select_user_name
+    get_user_password
     get_pubkey
     
     # System setup
