@@ -744,6 +744,9 @@ EOF
 }
 
 # Helper function to create WireGuard clients
+# NOTE: This adds clients to the config file. 
+# If wg0 interface is already running, you need to reload it after using this function:
+#   systemctl reload wg-quick@wg0  or  wg-quick down wg0 && wg-quick up wg0
 create_wireguard_client() {
     local client_name="$1"
     local client_ip="$2"
@@ -778,11 +781,14 @@ EOF
     # Generate QR code
     qrencode -t ansiutf8 < "/etc/wireguard/clients/${client_name}.conf" > "/etc/wireguard/clients/${client_name}_qr.txt"
     
-    # Add peer to server configuration
-    wg set wg0 peer "$client_public_key" allowed-ips "${client_ip}/32"
-    
-    # Save configuration
-    wg-quick save wg0
+    # Add peer to server configuration file (not using wg set since interface may not be up yet)
+    cat >> /etc/wireguard/wg0.conf << EOF
+
+[Peer]
+# ${client_name}
+PublicKey = ${client_public_key}
+AllowedIPs = ${client_ip}/32
+EOF
     
     log "Client $client_name created successfully"
 }
