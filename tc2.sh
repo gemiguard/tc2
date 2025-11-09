@@ -595,10 +595,10 @@ EOF
         USER_PASSWORD=$(openssl rand -base64 24)
         echo "${USER_ACCOUNT_NAME}:${USER_PASSWORD}" | chpasswd
         
-        log "User '$USER_ACCOUNT_NAME' created"
+        log "User '$USER_ACCOUNT_NAME' created with password"
         log "IMPORTANT: Save this password: $USER_PASSWORD"
     else
-        log "User '$USER_ACCOUNT_NAME' already exists - skipping user creation"
+        log "User '$USER_ACCOUNT_NAME' already exists"
         
         # Ensure user is in sudo group
         if ! groups "$USER_ACCOUNT_NAME" | grep -q '\bsudo\b'; then
@@ -606,8 +606,31 @@ EOF
             usermod -aG sudo "$USER_ACCOUNT_NAME"
         fi
         
-        # Clear USER_PASSWORD since we're using existing account
-        USER_PASSWORD=""
+        # Check if user has a password set
+        if passwd -S "$USER_ACCOUNT_NAME" | grep -q " NP "; then
+            log "Existing user has no password - setting one now"
+            USER_PASSWORD=$(openssl rand -base64 24)
+            echo "${USER_ACCOUNT_NAME}:${USER_PASSWORD}" | chpasswd
+            log "Password set for existing user: $USER_PASSWORD"
+        else
+            log "Existing user already has a password - not changing it"
+            USER_PASSWORD=""
+        fi
+    fi
+    
+    # Configure passwordless sudo
+    log "Configuring passwordless sudo for $USER_ACCOUNT_NAME"
+    SUDOERS_FILE="/etc/sudoers.d/${USER_ACCOUNT_NAME}"
+    
+    # Create sudoers.d file (safer than modifying /etc/sudoers directly)
+    echo "${USER_ACCOUNT_NAME} ALL=(ALL) NOPASSWD:ALL" > "$SUDOERS_FILE"
+    chmod 0440 "$SUDOERS_FILE"
+    
+    # Validate sudoers file
+    if visudo -c -f "$SUDOERS_FILE" &>/dev/null; then
+        log "Passwordless sudo configured successfully"
+    else
+        error "Failed to configure passwordless sudo - sudoers syntax error"
     fi
     
     # Restart SSH with verification
@@ -1189,12 +1212,15 @@ SSH ACCESS INFORMATION
 Port: ${SSH_PORT}
 User: ${USER_ACCOUNT_NAME}
 Authentication: SSH Key Only (password authentication disabled)
-$([ -n "${USER_PASSWORD:-}" ] && echo "Initial Password: ${USER_PASSWORD}" || echo "Note: Using existing user account (password not changed)")
+Sudo Access: Passwordless (no password required for sudo commands)
+$([ -n "${USER_PASSWORD:-}" ] && echo "Account Password: ${USER_PASSWORD}" || echo "Note: Using existing user account (password not changed)")
 
 IMPORTANT: 
 - Root login is disabled for password authentication
 - Only SSH key authentication is allowed
 - User '${USER_ACCOUNT_NAME}' has sudo privileges
+- Passwordless sudo is configured (no password needed for sudo commands)
+- Account password is set for console access and other services
 
 ================================================================================
 WIREGUARD VPN SERVER
