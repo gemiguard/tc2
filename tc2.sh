@@ -300,6 +300,13 @@ select_user_name() {
         if ! validate_username "$USER_ACCOUNT_NAME"; then
             error "Configured username '$USER_ACCOUNT_NAME' is invalid"
         fi
+        
+        # Check if configured user exists
+        if getent passwd "$USER_ACCOUNT_NAME" &>/dev/null; then
+            log "User '$USER_ACCOUNT_NAME' already exists - will use existing account"
+            return
+        fi
+        
         log "Using configured username: $USER_ACCOUNT_NAME"
         return
     fi
@@ -308,6 +315,11 @@ select_user_name() {
         read -rp "Enter username for VPS account and Netdata login: " response
         response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
         
+        if [ -z "$response" ]; then
+            warning "Username cannot be empty"
+            continue
+        fi
+        
         if ! validate_username "$response"; then
             warning "Invalid username format. Use lowercase letters, numbers, hyphens, underscores only."
             continue
@@ -315,7 +327,15 @@ select_user_name() {
         
         if getent passwd "$response" &>/dev/null; then
             warning "Username '$response' already exists"
-            continue
+            read -rp "Use existing user '$response'? (yes/no): " use_existing
+            if [ "$use_existing" = "yes" ]; then
+                USER_ACCOUNT_NAME="$response"
+                log "Using existing user: $USER_ACCOUNT_NAME"
+                break
+            else
+                log "Please choose a different username"
+                continue
+            fi
         fi
         
         USER_ACCOUNT_NAME="$response"
@@ -577,6 +597,17 @@ EOF
         
         log "User '$USER_ACCOUNT_NAME' created"
         log "IMPORTANT: Save this password: $USER_PASSWORD"
+    else
+        log "User '$USER_ACCOUNT_NAME' already exists - skipping user creation"
+        
+        # Ensure user is in sudo group
+        if ! groups "$USER_ACCOUNT_NAME" | grep -q '\bsudo\b'; then
+            log "Adding existing user to sudo group"
+            usermod -aG sudo "$USER_ACCOUNT_NAME"
+        fi
+        
+        # Clear USER_PASSWORD since we're using existing account
+        USER_PASSWORD=""
     fi
     
     # Restart SSH with verification
@@ -1158,7 +1189,7 @@ SSH ACCESS INFORMATION
 Port: ${SSH_PORT}
 User: ${USER_ACCOUNT_NAME}
 Authentication: SSH Key Only (password authentication disabled)
-$([ -n "${USER_PASSWORD:-}" ] && echo "Initial Password: ${USER_PASSWORD}")
+$([ -n "${USER_PASSWORD:-}" ] && echo "Initial Password: ${USER_PASSWORD}" || echo "Note: Using existing user account (password not changed)")
 
 IMPORTANT: 
 - Root login is disabled for password authentication
